@@ -160,15 +160,15 @@ function textOf(node: RenderElement | string | null | undefined): string {
   return label + children.map(textOf).join('')
 }
 
-test('the band is the crew and a way in: no figures, no filler', async ($, on) => {
+test('the band is the crew, the context and a way in: no spend, no filler', async ($, on) => {
   world(on)
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   for (const surface of SURFACES) {
     const band = await $.ui.mount({ plugin: 'mission-control', surface, component: 'AbovePrompt', props: BAND_PROPS })
     const drawn = textOf(await band.drawn())
     expect(drawn).toContain('Mission control')
-    // The context, the spend and the limits wait in the pane.
-    for (const figure of ['351k', '500k', '$12.40', '5h', 'compact', 'Hide']) expect(drawn).not.toContain(figure)
+    // The spend and the limits wait in the pane.
+    for (const figure of ['$12.40', '5h', 'Hide', 'No reading yet']) expect(drawn).not.toContain(figure)
     await band.resize({ columns: 60, rows: surface === 'desktop' ? 2 : 1, in: 'strip' })
     await band.advance(1000)
     // Claude, in its own colour: a head of block glyphs in a terminal, pixels on the desktop.
@@ -179,12 +179,36 @@ test('the band is the crew and a way in: no figures, no filler', async ($, on) =
   }
 })
 
+function inkOf(node: RenderElement | string | null | undefined, into = new Set<string>()): Set<string> {
+  if (node === null || node === undefined || typeof node === 'string') return into
+  const props = (node as { props?: { color?: unknown } }).props
+  if (typeof props?.color === 'string') into.add(props.color)
+  for (const child of (node as { children?: (RenderElement | string)[] }).children ?? []) inkOf(child, into)
+  return into
+}
+
+test('under the Clawds, the context as the pane shows it: how much, when it compacts, what fills it', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: 'mission-control', surface, component: 'AbovePrompt', props: BAND_PROPS })
+    const drawn = await band.drawn()
+    const text = textOf(drawn)
+    for (const figure of ['of 500k used', 'compact', 'Messages', 'Free space', '%']) expect(text).toContain(figure)
+    expect(text).not.toContain('Autocompact buffer')
+    if (surface === 'terminal') expect(text).not.toContain('▒')
+    const colours = surface === 'terminal' ? inkOf(drawn) : paintOf(drawn)
+    for (const part of ['permission', 'inactive', 'promptBorder']) expect([...colours]).toContain(part)
+    await band.unmount()
+  }
+})
+
 test('a fresh session: Claude alone, rising into view, and nothing else', async ($, on) => {
   world(on, [], { tokens: undefined, cost: 0 })
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   for (const surface of SURFACES) {
     const band = await $.ui.mount({ plugin: 'mission-control', surface, component: 'AbovePrompt', props: BAND_PROPS })
-    expect(textOf(await band.drawn())).toBe('Mission control')
+    expect(textOf(await band.drawn()).replace(/[━─]/g, '')).toMatch(/^Mission control\d+k of 500k used · auto-compact at /)
     await band.unmount()
   }
 })
@@ -202,7 +226,7 @@ test('a band hidden from the pane is back at the next load', async ($, on) => {
     expect(textOf(await band.drawn())).not.toContain('Mission control')
     // A reload, like a resumed session, starts the session over.
     await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
-    expect(textOf(await band.drawn())).toBe('Mission control')
+    expect(textOf(await band.drawn()).replace(/[━─]/g, '')).toMatch(/^Mission control\d+k of 500k used · auto-compact at /)
     await band.unmount()
   }
 })
@@ -224,9 +248,9 @@ test('hovering a Clawd on the band names it and says what it is doing', async ($
     expect(said).toContain('Explore')
     expect(said).toContain('thinking…')
     expect(said).toContain('Map the billing module')
-    // A bubble: pixel paper on the desktop, a quadrant tail in a terminal.
+    // A bubble of pixel paper on the desktop; plain words in a terminal, no paper to show seams.
     if (surface === 'desktop') expect([...paintOf(hovered)]).toContain('text')
-    else expect(said).toContain('▟')
+    else expect([...paintOf(hovered)]).not.toContain('text'), expect(said).not.toMatch(/[▟▌]/)
     await band.pointer({ type: 'leave', x: 0, y: 0, in: 'strip' })
     const left = await band.drawn({ in: 'strip' })
     expect(textOf(left)).not.toContain('Explore')
@@ -268,23 +292,21 @@ test('a Clawd at work turns to look at you under the pointer, its laptop left on
   expect(isMirrored(inkRows(await spriteOf(), BLUE))).toBe(false)
   await band.unmount()
 
-  // A terminal's head: eyes darting at the work, then on you, `▐▜█▛▌`.
-  const heads = await $.ui.mount({ plugin: 'mission-control', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
-  await heads.resize({ columns: 70, rows: 1, in: 'strip' })
-  const glances = async () => {
-    let seen = ''
-    for (let i = 0; i < 24; i++) {
-      await heads.advance(125)
-      seen += `${textOf(await heads.drawn({ in: 'strip' }))}\n`
-    }
-    return seen
-  }
-  expect(await glances()).toMatch(/▐▜█▜▌|▐▛█▛▌/)
-  await heads.pointer({ type: 'move', x: 12, y: 0, in: 'strip' })
-  const watched = await glances()
-  expect(watched).toContain('▐▜█▛▌')
-  expect(watched).not.toMatch(/▐▜█▜▌|▐▛█▛▌/)
-  await heads.unmount()
+  // A terminal draws the whole Clawd in three rows: side-on at the laptop, then facing you.
+  const rows = await $.ui.mount({ plugin: 'mission-control', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  await rows.resize({ columns: 70, rows: 3, in: 'strip' })
+  await rows.advance(125 * 12)
+  const glyphsOf = async () => kidsOf(kidsOf(await rows.drawn({ in: 'strip' }))[1] as RenderElement)[0] as RenderElement
+  const atDesk = await glyphsOf()
+  expect(kidsOf(atDesk)).toHaveLength(3)
+  expect(textOf(atDesk)).not.toMatch(/▐▛███▜▌/)
+  expect([...inkOf(atDesk)]).toContain('inactive')
+  await rows.pointer({ type: 'move', x: 14, y: 1, in: 'strip' })
+  await rows.advance(125 * 10)
+  const facing = await glyphsOf()
+  expect(textOf(facing)).toMatch(/▐▛███▜▌|▐█████▌/)
+  expect([...inkOf(facing)]).toContain('inactive')
+  await rows.unmount()
 })
 
 test('idle and alone, Claude wanders the band and plays; back to work, it walks home to its desk', async ($, on) => {

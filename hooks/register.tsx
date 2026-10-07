@@ -515,8 +515,8 @@ function contextOf(fill: Fill, current: Reading | null): ContextView {
         ? []
         : [
             ...parts.filter(one => one.kind === 'used').sort((a, b) => b.tokens - a.tokens),
+            // The buffer auto-compact keeps is left out: the compact note says where it starts.
             ...parts.filter(one => one.kind === 'free'),
-            ...parts.filter(one => one.kind === 'buffer'),
           ].map(one => ({ name: one.name, share: one.tokens / total, color: one.color, kind: one.kind })),
   }
 }
@@ -620,9 +620,9 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    // The reading is read for its beat alone: each one redraws the band, so a
-    // long wait turns into a nap and a hover's figures stay fresh.
-    const [isHidden, members, , now] = await Promise.all([read($, isBandHidden), read($, crew), read($, reading), $.clock.now()])
+    // Each reading redraws the band: the context under the crew stays current,
+    // a long wait turns into a nap and a hover's figures stay fresh.
+    const [isHidden, members, current, history, now] = await Promise.all([read($, isBandHidden), read($, crew), read($, reading), read($, turns), $.clock.now()])
     if (isHidden) return next(e)
 
     const table = $.ui.resolve(e)
@@ -630,16 +630,19 @@ export const register: Register = on => {
     const Client = 'Client' in table ? table.Client : undefined
     const where: Where | null = e.surface === 'desktop' || e.surface === 'terminal' ? e.surface : null
     const { Box } = kit
+    const shown = contextOf(fillOf(current, history), current)
 
     return Band(
       kit,
       {
         strip:
           Client === undefined || where === null ? null : (
-            <Box flexGrow={1} flexShrink={1} minWidth={where === 'desktop' ? STRIP_MAIN_CH : 9}>
-              <Client key="strip" module="./clawd.tsx" width="100%" height={where === 'desktop' ? STRIP_LH : 1} props={stripOf(members, now, where)} />
+            <Box flexGrow={1} flexShrink={1} minWidth={where === 'desktop' ? STRIP_MAIN_CH : 11}>
+              <Client key="strip" module="./clawd.tsx" width="100%" height={where === 'desktop' ? STRIP_LH : 3} props={stripOf(members, now, where)} />
             </Box>
           ),
+        context: shown.used === null ? null : shown,
+        width: e.props.bodyColumns,
       },
       { open: () => void openPane($) },
     )

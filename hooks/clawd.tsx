@@ -185,19 +185,6 @@ function drawLaptop(c: Canvas, x: number, y: number, scale: number, glow: number
   fill(-3, 4, 5, 1, inks.keys)
 }
 
-/** A subagent's head, for the terminal's one-row strip: `▐▜█▛▌`. */
-const HEAD_W = 10
-
-/** Its two rows, the top one last to rise and first to sink: `reveal` as a Clawd's. */
-function drawHead(c: Canvas, x: number, eyes: Eyes, ink: string, reveal: number): void {
-  if (reveal < SPRITE_H - 1) return
-  const holes = eyes === 'shut' ? [] : eyes === 'closed' ? [2, 3, 6, 7] : eyes === 'left' ? [2, 6] : eyes === 'right' ? [3, 7] : [2, 7]
-  for (let col = 1; col <= 8; col++) {
-    if (reveal >= SPRITE_H) paint(c, x, 0, 1, col, 0, 1, 1, ink)
-    if (!holes.includes(col)) paint(c, x, 0, 1, col, 1, 1, 1, ink)
-  }
-}
-
 /**
  * The row a Clawd's head starts on. The desktop keeps a row of headroom for
  * hops. A terminal draws two pixel rows per cell, so a head that starts on an
@@ -924,15 +911,9 @@ function stripKey(all: readonly OnStrip[], drawn: readonly OnStrip[], figures: r
   return `${who}~${x}#${looks.join('|')}`
 }
 
-/** The terminal's eyes: darting at a tool's work, wandering while it writes, on you under the pointer. */
-function headEyes(mood: Mood, look: Look, frame: number, id: string, isHovered: boolean): Eyes {
-  if (isHovered) return look.pose.eyes
-  if (mood === 'working') return frame % 4 < 2 ? 'left' : 'right'
-  if (mood === 'thinking') return glanceOf((frame + seedOf(id)) * 3)
-  return look.pose.eyes
-}
-
 const ASIDE_W = 6
+/** A terminal strip's slot: a scene's columns, two to a cell. */
+const STRIP_CELLS = Math.ceil(SCENE_W / 2)
 const MORE_W = 4
 /** The slot of the `+N` the strip has no room for. */
 const MORE = '+'
@@ -946,7 +927,7 @@ function strip(props: StripProps, memo: Memo, frame: number, hover: string | nul
   // As many as fit, Claude first, then a count of the rest.
   const gap = isDesktop ? STRIP.gap : 1
   const widthOf = (one: OnStrip, i: number) =>
-    (isDesktop ? round3(SCENE_W * STRIP.pixel * STRIP.scale) : (i === 0 ? SPRITE_W : HEAD_W) / 2) + (one.aside === null ? 0 : ASIDE_W)
+    (isDesktop ? round3(SCENE_W * STRIP.pixel * STRIP.scale) : STRIP_CELLS) + (one.aside === null ? 0 : ASIDE_W)
   const room = all.map((one, i) => widthOf(one, i) + (i === 0 ? 0 : gap))
   const across = (n: number) => room.slice(0, n).reduce((sum, one) => sum + one, 0) + (n < all.length ? gap + MORE_W : 0)
   let fit = all.length
@@ -999,7 +980,7 @@ function strip(props: StripProps, memo: Memo, frame: number, hover: string | nul
   const left = under === undefined ? 0 : Math.ceil(under.to) + (isDesktop ? 0 : 1)
   const speech =
     say === null || under === undefined || surface.columns - left < BUBBLE_ROOM ? null : (
-      <Box position="absolute" top={0} left={left} right={0} flexDirection="row">
+      <Box position="absolute" top={isDesktop ? 0 : 1} left={left} right={0} flexDirection="row">
         {bubble(el, isDesktop, say)}
       </Box>
     )
@@ -1022,12 +1003,14 @@ function strip(props: StripProps, memo: Memo, frame: number, hover: string | nul
         </Box>
       )
     } else {
-      // One row: Claude's head as the logo's top, the crew's smaller.
-      const eyes = headEyes(one.walker.mood, look, frame, one.walker.id, one.walker.id === hover)
-      const c = blank(i === 0 ? SPRITE_W : HEAD_W, 2)
-      if (i === 0) drawClawd(c, 0, 0, { ...look.pose, view: 'front', eyes, legs: 'none', lift: 0, reveal }, look.ink)
-      else drawHead(c, 0, eyes, look.ink, reveal)
-      sprite = textRow(el, joinRuns(quadCells(c, 0)))
+      // The whole Clawd, laptop and all, as the stage draws it: three rows.
+      const c = blank(SCENE_W, SPRITE_H + 1)
+      drawFigure(c, look, at, 1, false, reveal)
+      sprite = (
+        <Box flexDirection="column" width={STRIP_CELLS} flexShrink={0}>
+          {quadRows(el, c)}
+        </Box>
+      )
     }
     return (
       <Box flexDirection="row" flexShrink={0} alignItems="flex-start" marginLeft={i === 0 ? roamX : gap}>
@@ -1037,7 +1020,7 @@ function strip(props: StripProps, memo: Memo, frame: number, hover: string | nul
     )
   })
   return (
-    <Box flexDirection="row" width="100%" alignItems={isDesktop ? 'flex-end' : 'flex-start'}>
+    <Box flexDirection="row" width="100%" alignItems="flex-end">
       {slots}
       {drawn.length > last ? null : count}
       {speech}
@@ -1051,7 +1034,8 @@ function strip(props: StripProps, memo: Memo, frame: number, hover: string | nul
 // theme, dark on the light one. On the desktop it is pixel art on the
 // strip's grid, a pixel as wide as two canvas pixels and as tall as one: its
 // corners step in twice, and a tail of steps points back at the Clawd. A
-// terminal draws it on one row, the tail in the quadrant block that opens it.
+// terminal says it in plain words beside the Clawd: a font draws block
+// glyphs shorter than the row a background fills, so paper there shows seams.
 
 /** What a hover's bubble says: the name, what it is doing, then what it was asked, cut first. */
 type Say = { name: string; doing: string; task: string }
@@ -1067,26 +1051,28 @@ const BUBBLE_ROOM = 10
 function bubble(el: Elements, isDesktop: boolean, say: Say): RenderElement {
   const { Box, Text } = el
   const words = (pad: string) => (
-    <Text wrap="truncate-end" color={WORDS} backgroundColor={isDesktop ? undefined : PAPER}>
+    <Text wrap="truncate-end" color={WORDS}>
       {pad}
-      <Text bold color={WORDS} backgroundColor={isDesktop ? undefined : PAPER}>
+      <Text bold color={WORDS}>
         {say.name}
       </Text>
       {say.doing === '' ? '' : `  ${say.doing}`}
       {say.task === '' ? null : (
-        <Text dimColor color={WORDS} backgroundColor={isDesktop ? undefined : PAPER}>{`  ·  ${say.task}`}</Text>
+        <Text dimColor color={WORDS}>{`  ·  ${say.task}`}</Text>
       )}
       {pad}
     </Text>
   )
   if (!isDesktop) {
     return (
-      <Box flexDirection="row" flexShrink={1} minWidth={0}>
-        <Text color={PAPER}>▟</Text>
-        <Box flexShrink={1} minWidth={0}>
-          {words(' ')}
-        </Box>
-        <Text color={PAPER}>▌</Text>
+      <Box flexShrink={1} minWidth={0}>
+        <Text wrap="truncate-end">
+          <Text bold color="text">
+            {say.name}
+          </Text>
+          {say.doing === '' ? null : <Text color="inactive">{`  ${say.doing}`}</Text>}
+          {say.task === '' ? null : <Text color="subtle">{`  ·  ${say.task}`}</Text>}
+        </Text>
       </Box>
     )
   }
@@ -1120,7 +1106,7 @@ function stripTick(memo: Memo, props: StripProps, frame: number, hover: string |
   const isDesktop = props.surface === 'desktop'
   const main = props.walkers[0]
   const isAlone = onStrip(memo, props.walkers, frame, hover).length === 1
-  const room = columns - (isDesktop ? round3(SCENE_W * STRIP.pixel * STRIP.scale) : SPRITE_W / 2) - ASIDE_W - ROAM_CLEAR
+  const room = columns - (isDesktop ? round3(SCENE_W * STRIP.pixel * STRIP.scale) : STRIP_CELLS) - ASIDE_W - ROAM_CLEAR
   roamTick(memo, main, isAlone, room, STRIDE[isDesktop ? 'desktop' : 'terminal'], frame, main !== undefined && hover === main.id)
   const all = onStrip(memo, props.walkers, frame, hover)
   const drawn = memo.cast.flatMap(id => all.filter(one => one.walker.id === id))

@@ -66,19 +66,24 @@ const percent = (n: number) => `${Math.round(Math.max(0, Math.min(100, n)))}%`
 
 // ── The band ──────────────────────────────────────────────────────────────
 //
-// Only the crew, alive, and the way in: the Clawds say who is at work, a
-// hover names one and says what it is doing, and the numbers wait in the pane.
+// The crew, alive, and the way in: the Clawds say who is at work and a hover
+// names one and says what it is doing. Under them, the context they work in;
+// the budget waits in the pane.
 
 export type BandView = {
   /** The crew, animated: a Client the hooks build. */
   strip: RenderElement | null
+  /** The context under the crew, as the pane shows it; null before the first reading. */
+  context: ContextView | null
+  /** Cells the context spans in a terminal. */
+  width: number
 }
 
 export type BandActions = { open: () => void }
 
 export function Band(kit: Kit, view: BandView, act: BandActions): RenderElement {
   const { Box, Button } = kit
-  return (
+  const crew = (
     <Box flexDirection="row" alignItems="center" width="100%" columnGap={2}>
       {view.strip ?? <Box flexGrow={1} />}
       <Box flexShrink={0}>
@@ -88,6 +93,27 @@ export function Band(kit: Kit, view: BandView, act: BandActions): RenderElement 
           <Button key="open" plain label="Mission control" onPress={act.open} />
         )}
       </Box>
+    </Box>
+  )
+  const ctx = view.context
+  if (ctx === null) return crew
+  if (isTerminal(kit)) {
+    // Rows are dear here: the bar is the floor the crew stands on, and the
+    // figures and what fills it share the row under it.
+    return (
+      <Box flexDirection="column" width="100%">
+        {crew}
+        {ctx.parts.length === 0 ? null : contextBar(kit, ctx.parts, view.width)}
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+          {[contextLine(kit, ctx), ...legendOf(kit, ctx.parts)]}
+        </Box>
+      </Box>
+    )
+  }
+  return (
+    <Box flexDirection="column" width="100%" rowGap={0.5}>
+      {crew}
+      {contextBlock(kit, ctx, view.width)}
     </Box>
   )
 }
@@ -122,7 +148,7 @@ export type ContextView = {
   used: string | null
   window: string | null
   compact: { text: string; tone: Tone } | null
-  /** What fills the window, each a share of it, with its /context colour: what is used, then the free space, then the buffer auto-compact keeps. */
+  /** What fills the window, each a share of it, with its /context colour: what is used, then the free space. */
   parts: { name: string; share: number; color: string; kind: 'used' | 'free' | 'buffer' }[]
 }
 
@@ -215,24 +241,27 @@ function crewList(kit: Kit, rows: CrewRow[], act: PaneActions): RenderElement {
   )
 }
 
-/** A terminal's bar: what is used solid, the free space light, the buffer shaded. */
-const GLYPH = { used: '█', free: '░', buffer: '▒' }
+/** A terminal's bar: what is used a heavy rule, the free space a light one. */
+const GLYPH = { used: '━', free: '─', buffer: '╌' }
 
-function composition(kit: Kit, parts: ContextView['parts'], width: number): RenderElement[] {
+/** What fills the context, as one bar of its parts' colours, `width` cells wide in a terminal. */
+function contextBar(kit: Kit, parts: ContextView['parts'], width: number): RenderElement {
   const { Box, Text } = kit
-  if (parts.length === 0) return []
-  const bar = isTerminal(kit) ? (
-    <Text>
-      {cellsOf(
-        parts.map(part => part.share),
-        Math.max(10, width),
-      ).map((cells, i) => {
-        const part = parts[i]
-        return part === undefined || cells === 0 ? null : <Text color={part.color}>{GLYPH[part.kind].repeat(cells)}</Text>
-      })}
-    </Text>
-  ) : (
-    <Box flexDirection="row" width="100%" height={0.4} overflow="hidden">
+  if (isTerminal(kit)) {
+    return (
+      <Text wrap="truncate">
+        {cellsOf(
+          parts.map(part => part.share),
+          Math.max(10, width),
+        ).map((cells, i) => {
+          const part = parts[i]
+          return part === undefined || cells === 0 ? null : <Text color={part.color}>{GLYPH[part.kind].repeat(cells)}</Text>
+        })}
+      </Text>
+    )
+  }
+  return (
+    <Box flexDirection="row" width="100%" height={0.4} overflow="hidden" flexShrink={0}>
       {cellsOf(
         parts.map(part => part.share),
         100,
@@ -242,20 +271,50 @@ function composition(kit: Kit, parts: ContextView['parts'], width: number): Rend
       })}
     </Box>
   )
+}
+
+function composition(kit: Kit, parts: ContextView['parts'], width: number): RenderElement[] {
+  const { Box, Text } = kit
+  if (parts.length === 0) return []
+  return [
+    contextBar(kit, parts, width),
+    <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+      {legendOf(kit, parts)}
+    </Box>,
+  ]
+}
+
+/** Each part that counts, by name and share: the five biggest used, then the free space. */
+function legendOf(kit: Kit, parts: ContextView['parts']): RenderElement[] {
+  const { Text } = kit
   const named = parts.filter(part => part.kind === 'used' && part.share >= 0.005).slice(0, 5)
-  const legend = [...named, ...parts.filter(part => part.kind !== 'used')].map(part => (
+  return [...named, ...parts.filter(part => part.kind !== 'used')].map(part => (
     <Text wrap="truncate-end">
       <Text color={part.color}>■</Text>
       <Text color="inactive">{` ${part.name} `}</Text>
       <Text color="subtle">{`${Math.round(part.share * 100)}%`}</Text>
     </Text>
   ))
-  return [
-    bar,
-    <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-      {legend}
-    </Box>,
-  ]
+}
+
+/** How much is used of the window, and when it compacts. */
+function contextLine(kit: Kit, ctx: ContextView): RenderElement {
+  const { Text } = kit
+  return (
+    <Text wrap="truncate-end">
+      {ctx.used === null ? (
+        <Text color="subtle">No reading yet: the context shows after Claude's first reply.</Text>
+      ) : (
+        [<Text bold>{ctx.used}</Text>, <Text color="subtle">{` of ${ctx.window ?? '?'} used`}</Text>]
+      )}
+      {ctx.compact === null ? null : [<Text color="subtle"> · </Text>, <Text color={INK[ctx.compact.tone]}>{ctx.compact.text}</Text>]}
+    </Text>
+  )
+}
+
+/** How much is used, when it compacts, and what fills it: the pane's Context, and the band's. */
+function contextBlock(kit: Kit, ctx: ContextView, width: number): RenderElement[] {
+  return [contextLine(kit, ctx), ...composition(kit, ctx.parts, width)]
 }
 
 function paceBar(kit: Kit, pace: Pace, width: number): RenderElement {
@@ -333,17 +392,7 @@ export function Pane(kit: Kit, view: PaneView, act: PaneActions): RenderElement 
 
       {view.crew.length > 1 ? crewList(kit, view.crew, act) : null}
 
-      {section(kit, 'Context', [
-        <Text wrap="truncate-end">
-          {ctx.used === null ? (
-            <Text color="subtle">No reading yet: the context shows after Claude's first reply.</Text>
-          ) : (
-            [<Text bold>{ctx.used}</Text>, <Text color="subtle">{` of ${ctx.window ?? '?'} used`}</Text>]
-          )}
-          {ctx.compact === null ? null : [<Text color="subtle"> · </Text>, <Text color={INK[ctx.compact.tone]}>{ctx.compact.text}</Text>]}
-        </Text>,
-        ...composition(kit, ctx.parts, view.width - 4),
-      ])}
+      {section(kit, 'Context', contextBlock(kit, ctx, view.width - 4))}
 
       {section(kit, 'Budget', [
         <Text wrap="truncate-end">

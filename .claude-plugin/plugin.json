@@ -1,6 +1,6 @@
 {
   "name": "mission-control",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Your crew, live: an animated Clawd for Claude and every subagent above the prompt, and a pane with the context and the budget.",
   "author": {
     "name": "Dat Vo",
