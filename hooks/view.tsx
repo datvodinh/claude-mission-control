@@ -77,6 +77,8 @@ export type BandView = {
   context: ContextView | null
   /** Cells the context spans in a terminal. */
   width: number
+  /** Rows the band may take before it scrolls, in a terminal. */
+  rows: number
 }
 
 export type BandActions = { open: () => void }
@@ -99,14 +101,21 @@ export function Band(kit: Kit, view: BandView, act: BandActions): RenderElement 
   if (ctx === null) return crew
   if (isTerminal(kit)) {
     // Rows are dear here: the bar is the floor the crew stands on, and the
-    // figures and what fills it share the row under it.
+    // figures and what fills it share the row under it. Short of rows, the
+    // legend goes first, then the figures, so the band never scrolls.
+    const room = view.rows - CREW_ROWS
+    const hasBar = ctx.parts.length > 0 && room >= 1
+    const lines = room - (hasBar ? 1 : 0)
+    const words = lines >= textRows(ctx, view.width) ? [contextLine(kit, ctx), ...legendOf(kit, ctx.parts)] : lines >= 1 ? [contextLine(kit, ctx)] : []
     return (
       <Box flexDirection="column" width="100%">
         {crew}
-        {ctx.parts.length === 0 ? null : contextBar(kit, ctx.parts, view.width)}
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-          {[contextLine(kit, ctx), ...legendOf(kit, ctx.parts)]}
-        </Box>
+        {hasBar ? contextBar(kit, ctx.parts, view.width) : null}
+        {words.length === 0 ? null : (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+            {words}
+          </Box>
+        )}
       </Box>
     )
   }
@@ -284,17 +293,40 @@ function composition(kit: Kit, parts: ContextView['parts'], width: number): Rend
   ]
 }
 
+/** The parts a legend names: the five biggest used, then the free space. */
+function legendNames(parts: ContextView['parts']): ContextView['parts'] {
+  return [...parts.filter(part => part.kind === 'used' && part.share >= 0.005).slice(0, 5), ...parts.filter(part => part.kind !== 'used')]
+}
+
 /** Each part that counts, by name and share: the five biggest used, then the free space. */
 function legendOf(kit: Kit, parts: ContextView['parts']): RenderElement[] {
   const { Text } = kit
-  const named = parts.filter(part => part.kind === 'used' && part.share >= 0.005).slice(0, 5)
-  return [...named, ...parts.filter(part => part.kind !== 'used')].map(part => (
+  return legendNames(parts).map(part => (
     <Text wrap="truncate-end">
       <Text color={part.color}>■</Text>
       <Text color="inactive">{` ${part.name} `}</Text>
       <Text color="subtle">{`${Math.round(part.share * 100)}%`}</Text>
     </Text>
   ))
+}
+
+/** A terminal strip's rows: a whole Clawd. */
+const CREW_ROWS = 3
+
+/** Rows the figures and the legend wrap to in `width` cells, each item kept whole. */
+function textRows(ctx: ContextView, width: number): number {
+  const line = `${ctx.used ?? ''} of ${ctx.window ?? '?'} used${ctx.compact === null ? '' : ` · ${ctx.compact.text}`}`
+  const items = [line, ...legendNames(ctx.parts).map(part => `■ ${part.name} ${Math.round(part.share * 100)}%`)]
+  let rows = 1
+  let at = 0
+  for (const item of items) {
+    const n = [...item].length
+    if (at > 0 && at + 2 + n > width) {
+      rows += 1
+      at = n
+    } else at += (at > 0 ? 2 : 0) + n
+  }
+  return rows
 }
 
 /** How much is used of the window, and when it compacts. */

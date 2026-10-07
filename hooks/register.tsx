@@ -643,6 +643,7 @@ export const register: Register = on => {
           ),
         context: shown.used === null ? null : shown,
         width: e.props.bodyColumns,
+        rows: e.props.maxRows,
       },
       { open: () => void openPane($) },
     )

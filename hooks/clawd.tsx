@@ -981,7 +981,7 @@ function strip(props: StripProps, memo: Memo, frame: number, hover: string | nul
   const speech =
     say === null || under === undefined || surface.columns - left < BUBBLE_ROOM ? null : (
       <Box position="absolute" top={isDesktop ? 0 : 1} left={left} right={0} flexDirection="row">
-        {bubble(el, isDesktop, say)}
+        {bubble(el, isDesktop, fitSay(say, surface.columns - left - (isDesktop ? BUBBLE_EDGES : 0)))}
       </Box>
     )
 
@@ -1047,6 +1047,24 @@ const BUBBLE = { px: round3(STRIP.pixel * 2), py: tall(STRIP.pixel) }
 const TAIL = [1, 2, 3, 2, 1]
 /** The least room the strip must have right of a Clawd for its bubble, in cells. */
 const BUBBLE_ROOM = 10
+
+/** A desktop bubble's cells besides its words: the tail, the padding either side, and a cell to spare. */
+const BUBBLE_EDGES = Math.ceil(3 * BUBBLE.px) + 3
+
+/**
+ * What a bubble says, cut to `room` cells so its paper hugs the words: the
+ * task goes first, then what it is doing, each ending in an ellipsis. A
+ * surface left to cut it drops whole runs, and the paper stays wide and blank.
+ */
+function fitSay(say: Say, room: number): Say {
+  const cut = (text: string, n: number) => ([...text].length <= n ? text : n <= 1 ? '' : `${[...text].slice(0, n - 1).join('').trimEnd()}…`)
+  const name = cut(say.name, room)
+  let left = room - [...name].length
+  const doing = say.doing === '' || left < 4 ? '' : cut(say.doing, left - 2)
+  left -= doing === '' ? 0 : 2 + [...doing].length
+  const task = say.task === '' || left < 8 ? '' : cut(say.task, left - 5)
+  return { name, doing, task }
+}
 
 function bubble(el: Elements, isDesktop: boolean, say: Say): RenderElement {
   const { Box, Text } = el

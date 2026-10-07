@@ -203,6 +203,26 @@ test('under the Clawds, the context as the pane shows it: how much, when it comp
   }
 })
 
+test('a short terminal keeps the band to its rows: the legend goes, then the figures, never a scroll', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: '/work/app', surface: 'terminal', isInteractive: true })
+  const at = async (maxRows: number) => {
+    const band = await $.ui.mount({ plugin: 'mission-control', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows } })
+    const text = textOf(await band.drawn())
+    await band.unmount()
+    return text
+  }
+  const roomy = await at(12)
+  expect(roomy).toContain('of 500k used')
+  expect(roomy).toContain('Free space')
+  const short = await at(5)
+  expect(short).toContain('of 500k used')
+  expect(short).not.toContain('Free space')
+  const shorter = await at(4)
+  expect(shorter).toMatch(/━/)
+  expect(shorter).not.toContain('of 500k used')
+})
+
 test('a fresh session: Claude alone, rising into view, and nothing else', async ($, on) => {
   world(on, [], { tokens: undefined, cost: 0 })
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
@@ -262,6 +282,24 @@ test('hovering a Clawd on the band names it and says what it is doing', async ($
     const overClaude = await band.drawn({ in: 'strip' })
     expect(textOf(overClaude)).toContain('Claude')
     expect(JSON.stringify(overClaude)).not.toContain('blue_FOR_SUBAGENTS_ONLY')
+    await band.unmount()
+  }
+})
+
+test('on a narrow band the bubble shrinks to fit: the words cut short, never dropped', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.agent.spawn(spawnOf('Map the billing module'))
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: 'mission-control', surface, component: 'AbovePrompt', props: BAND_PROPS })
+    const columns = 36
+    await band.resize({ columns, rows: surface === 'desktop' ? 2 : 3, in: 'strip' })
+    await band.advance(125)
+    await band.pointer({ type: 'move', x: surface === 'desktop' ? 9 : 14, y: surface === 'desktop' ? 0 : 1, in: 'strip' })
+    const said = textOf(await band.drawn({ in: 'strip' }))
+    expect(said).toContain('Explore')
+    expect(said).toMatch(/Explore {2}\S.*…/)
+    expect(said).not.toContain('Map the billing module')
     await band.unmount()
   }
 })
